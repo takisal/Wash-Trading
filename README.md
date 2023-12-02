@@ -1,6 +1,15 @@
-# Getting Started with Create React App
+# Wash
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Project that simplifies the process of obfuscating ownership history of a user's bitcoin
+
+## Server
+
+The server must be running for the application to work.
+You can run the server with
+
+```bash
+node server.cjs
+```
 
 ## Available Scripts
 
