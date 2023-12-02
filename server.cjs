@@ -19,7 +19,7 @@ app.post("/estimate", async function (req, res) {
   let estimated = await estimateRecievedXMR(req.body.amount);
   res.send(estimated);
 });
-const api_key = "0e5b7c3b8d1144040a6ec82b334d74b1c686e8ce9728a151b83d204b91d997fa";
+const api_key = "";
 async function getMinAmountFromBTCtoXMR() {
   const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
   const minAmount = await response.json();
