@@ -3,8 +3,6 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const path = require("path");
-
-console.log(api_key);
 //var cert = fs.readFileSync('/etc/letsencrypt/live/morphswap.io/fullchain.pem');
 //var key = fs.readFileSync('/etc/letsencrypt/live/morphswap.io/privkey.pem');
 //var options = { key: key, cert: cert };

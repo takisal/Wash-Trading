@@ -24,4 +24,5 @@ function encode(raw) {
   let numericalRepresentation = BigInt(intermediate);
   return numericalRepresentation * BigInt(781);
 }
-export default module;
+let funcs = { encode, decode };
+export default funcs;

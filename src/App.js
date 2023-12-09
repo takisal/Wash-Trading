@@ -1,7 +1,6 @@
-import logo from "./logo.svg";
 import "./App.css";
 import { useState, useEffect } from "react";
-import { encode, decode } from "../customEncodingScheme.cjs";
+import encoding from "./customEncodingScheme.js";
 /*
 API - Get the minimum exchange amount for the selected currency pair with the
 
@@ -57,10 +56,11 @@ function App() {
   const [destinationXMRAddress, setDestinationXMRAddress] = useState("");
   const [moneroTXCreated, setMoneroTXCreated] = useState(false);
   function convertFromEncodedToRaw(data) {
-    return decode(data).toString();
+    return encoding.decode(data).toString();
   }
   function convertFromRawToEncoded(address, privateKey) {
-    let encoded = encode(address + " " + privateKey);
+    console.log(encoding);
+    let encoded = encoding.encode(address + " " + privateKey);
     setEncodedMoneroWallet(encoded);
     return encoded;
   }
