@@ -43,6 +43,7 @@ function App() {
   const [lowTime, setLowTime] = useState(0);
   const [highTime, setHighTime] = useState(0);
   const [amountOfXMRToReceive, setAmountOfXMRToReceive] = useState(0);
+  const [amountOfBTCToReceive, setAmountOfBTCToReceive] = useState(0);
   const [amountOfBTCToSend, setAmountOfBTCToSend] = useState(0);
   const [destinationBTCAddress, setDestinationBTCAddress] = useState("");
   const [intermediateXMRAddress, setIntermediateXMRAddress] = useState("");
@@ -93,7 +94,7 @@ function App() {
   function estimateReceived(amount) {
     var myHeaders = new Headers();
     myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ amount });
+    let raw = JSON.stringify({ amount, path: "btc_xmr" });
     console.log(raw);
     var requestOptions = {
       method: "POST",
@@ -124,6 +125,7 @@ function App() {
         setLowTime(lowEndTime);
         setHighTime(highEndTime);
         setAmountOfXMRToReceive(result.estimatedAmount);
+        estimateReceivedStep2(result.estimatedAmount);
         console.log(
           "Time Low Estimate: ",
           lowEndTime,
@@ -132,6 +134,41 @@ function App() {
           "EstimatedAmount: ",
           result.estimatedAmount
         );
+      })
+      .catch((error) => console.log("error", error));
+  }
+  function estimateReceivedStep2(amount) {
+    var myHeaders = new Headers();
+    myHeaders.append("Content-Type", "application/json");
+    let raw = JSON.stringify({ amount, path: "xmr_btc" });
+    console.log(raw);
+    var requestOptions = {
+      method: "POST",
+      headers: myHeaders,
+      redirect: "follow",
+      body: raw,
+    };
+    console.log(requestOptions);
+    fetch("http://localhost:3000/estimate", requestOptions)
+      .then((response) => response.json())
+      .then((result) => {
+        let lowEndTime2 = "";
+        let highEndTime2 = "";
+        let preDash = true;
+        for (let i = 0; i < result.transactionSpeedForecast.length; i++) {
+          if (result.transactionSpeedForecast[i] === "-") {
+            preDash = false;
+          } else {
+            if (preDash) {
+              lowEndTime2 += result.transactionSpeedForecast[i];
+            } else {
+              highEndTime2 += result.transactionSpeedForecast[i];
+            }
+          }
+        }
+        setLowTime(lowTime + parseInt(lowEndTime2));
+        setHighTime(highTime + parseInt(highEndTime2));
+        setAmountOfBTCToReceive(result.estimatedAmount);
       })
       .catch((error) => console.log("error", error));
   }
@@ -246,7 +283,7 @@ function App() {
       <p>
         Swap will take between: {lowTime * 2} to {highTime * 2} minutes
       </p>
-      <p>You should receive: {amountOfXMRToReceive} XMR</p>
+      <p>You should receive: {amountOfBTCToReceive} untraceable BTC</p>
 
       <button onClick={createBTCtoXMRTransaction.bind(this, amountOfBTCToSend)}>Begin wash</button>
       <p>

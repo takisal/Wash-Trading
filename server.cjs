@@ -17,7 +17,7 @@ app.get("/getMinAmount", async function (req, res) {
   res.send(minAmount);
 });
 app.post("/estimate", async function (req, res) {
-  let estimated = await estimateRecievedXMR(req.body.amount);
+  let estimated = await estimateRecieved(req.body.amount, req.body.path);
   res.send(estimated);
 });
 app.post("/transactionStatus", async function (req, res) {
@@ -25,19 +25,20 @@ app.post("/transactionStatus", async function (req, res) {
   res.send(statusResult);
 });
 app.post("/createBTCToXMRTX", async function (req, res) {
-  let { amount, moneroAddress } = req.body.amount;
-  let preTransactionStats = createTX(
+  let { amount, moneroAddress } = req.body;
+  let preTransactionStats = await createTX(
     "https://api.changenow.io/v1/transactions/" + api_key,
     amount,
     moneroAddress,
     "btc",
     "xmr"
   );
+  console.log(preTransactionStats);
   res.send(preTransactionStats);
 });
 app.post("/createXMRToBTCTX", async function (req, res) {
-  let { amount, bitcoinAddress } = req.body.amount;
-  let preTransactionStats = createTX(
+  let { amount, bitcoinAddress } = req.body;
+  let preTransactionStats = await createTX(
     "https://api.changenow.io/v1/transactions/" + api_key,
     amount,
     bitcoinAddress,
@@ -51,8 +52,8 @@ async function getMinAmountFromBTCtoXMR() {
   const minAmount = await response.json();
   return minAmount;
 }
-async function estimateRecievedXMR(amount) {
-  let reqStr = "https://api.changenow.io/v1/exchange-amount/" + amount + "/btc_xmr?api_key=" + api_key;
+async function estimateRecieved(amount, pathString) {
+  let reqStr = "https://api.changenow.io/v1/exchange-amount/" + amount + "/" + pathString + "?api_key=" + api_key;
 
   let response = await fetch(reqStr);
   let jsonResponse = await response.json();
@@ -78,7 +79,7 @@ async function getTransactionStatus(id) {
   return statusR;
 }
 async function createTX(url, amount, address, from, to) {
-  // Default options are marked with *
+  console.log({ from, to, amount, address });
   let data = {
     from,
     to,
