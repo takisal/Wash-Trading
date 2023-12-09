@@ -1,7 +1,10 @@
+const api_key = require("./config.js");
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const path = require("path");
+
+console.log(api_key);
 //var cert = fs.readFileSync('/etc/letsencrypt/live/morphswap.io/fullchain.pem');
 //var key = fs.readFileSync('/etc/letsencrypt/live/morphswap.io/privkey.pem');
 //var options = { key: key, cert: cert };
@@ -19,7 +22,32 @@ app.post("/estimate", async function (req, res) {
   let estimated = await estimateRecievedXMR(req.body.amount);
   res.send(estimated);
 });
-const api_key = "";
+app.post("/transactionStatus", async function (req, res) {
+  let statusResult = await getTransactionStatus(req.body.id);
+  res.send(statusResult);
+});
+app.post("/createBTCToXMRTX", async function (req, res) {
+  let { amount, moneroAddress } = req.body.amount;
+  let preTransactionStats = createTX(
+    "https://api.changenow.io/v1/transactions/" + api_key,
+    amount,
+    moneroAddress,
+    "btc",
+    "xmr"
+  );
+  res.send(preTransactionStats);
+});
+app.post("/createXMRToBTCTX", async function (req, res) {
+  let { amount, bitcoinAddress } = req.body.amount;
+  let preTransactionStats = createTX(
+    "https://api.changenow.io/v1/transactions/" + api_key,
+    amount,
+    bitcoinAddress,
+    "xmr",
+    "btc"
+  );
+  res.send(preTransactionStats);
+});
 async function getMinAmountFromBTCtoXMR() {
   const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
   const minAmount = await response.json();
@@ -32,7 +60,6 @@ async function estimateRecievedXMR(amount) {
   let jsonResponse = await response.json();
   return jsonResponse;
 }
-//https://api.changenow.io/v1/transactions/:id/:api_key
 
 function trim(num, maxDec) {
   let d = false;
@@ -52,12 +79,12 @@ async function getTransactionStatus(id) {
   const statusR = await response.json();
   return statusR;
 }
-async function createBTCtoXMRtransaction(url = "", amount, xmrAddress) {
+async function createTX(url, amount, address, from, to) {
   // Default options are marked with *
   let data = {
-    from: "btc",
-    to: "xmr",
-    address: xmrAddress,
+    from,
+    to,
+    address,
     amount: trim(amount.toString(), 6),
     extraId: "",
     userId: "",
@@ -79,7 +106,8 @@ async function createBTCtoXMRtransaction(url = "", amount, xmrAddress) {
     referrerPolicy: "no-referrer", // no-referrer, *no-referrer-when-downgrade, origin, origin-when-cross-origin, same-origin, strict-origin, strict-origin-when-cross-origin, unsafe-url
     body: JSON.stringify(data), // body data type must match "Content-Type" header
   });
-  return response.json(); // parses JSON response into native JavaScript objects
+  let decoded = await response.json(); // parses JSON response into native JavaScript objects
+  return decoded;
   /*Example Response:
   {
   "payinAddress": "328E95juhLbXeDDVDR9thh58MtCsnKuvf6",
