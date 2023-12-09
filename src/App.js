@@ -1,5 +1,5 @@
 import "./App.css";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import encoding from "./customEncodingScheme.js";
 /*
 API - Get the minimum exchange amount for the selected currency pair with the
@@ -62,20 +62,21 @@ function App() {
   function convertFromRawToEncoded(address, privateKey) {
     console.log(encoding);
     let encoded = encoding.encode(address + " " + privateKey);
-    setEncodedMoneroWallet(encoded);
+    setEncodedMoneroWallet(encoded.toString());
     return encoded;
   }
-  function createXMRWallet() {
+  const createXMRWallet = useCallback(() => {
     let { moneroAddress, moneroPrivKey } = generateMoneroAddressAndPK();
     setIntermediateXMRAddress(moneroAddress);
     setIntermediateXMRPK(moneroPrivKey);
     convertFromRawToEncoded(moneroAddress, moneroPrivKey);
-  }
+  }, []);
+
   useEffect(() => {
     if (encodedMoneroWallet === "") {
       createXMRWallet();
     }
-  }, [encodedMoneroWallet]);
+  }, [encodedMoneroWallet, createXMRWallet]);
 
   function getMinAmount() {
     var requestOptions = {
@@ -176,7 +177,7 @@ function App() {
     setAmountOfBTCToSend(e.target.value);
   }
   function generateMoneroAddressAndPK() {
-    let moneroAddress = "test1337";
+    let moneroAddress = "asdads12337";
     let moneroPrivKey = "test44";
     return { moneroAddress, moneroPrivKey };
   }
