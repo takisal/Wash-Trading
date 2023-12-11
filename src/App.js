@@ -57,15 +57,11 @@ function App() {
   const [step2Status, setStep2Status] = useState("");
   const [destinationXMRAddress, setDestinationXMRAddress] = useState("");
   const [moneroTXCreated, setMoneroTXCreated] = useState(false);
-  const [stateDaemon, setStateDaemon] = useState(null);
-  const [stateHeight, setStateHeight] = useState(null);
-  const [stateTxsInPool, setStateTxsInPool] = useState(null);
   function convertFromEncodedToRaw(data) {
     return encoding.decode(data).toString();
   }
-  function convertFromRawToEncoded(address, privateKey) {
-    console.log(encoding);
-    let encoded = encoding.encode(address + " " + privateKey);
+  function convertFromRawToEncoded(address) {
+    let encoded = encoding.encode(address);
     setEncodedMoneroWallet(encoded.toString());
     return encoded;
   }
@@ -74,6 +70,7 @@ function App() {
     setEncodedMoneroWallet("waiting");
     console.log("initializing monero ");
     let address = createMoneroWallet();
+    console.log(address);
     setUserXMRAddress(address);
     convertFromRawToEncoded(address);
   }, []);
@@ -182,6 +179,9 @@ function App() {
   function handleInput1Change(e) {
     setAmountOfBTCToSend(e.target.value);
   }
+  function handleInput2Change(e) {
+    setFinalBTCAddress(e.target.value);
+  }
   function generateSeed() {
     let seed = "";
     let chosenWords = new Set();
@@ -204,6 +204,7 @@ function App() {
       .then((response) => response.json())
       .then((result) => {
         setUserXMRAddress(result.address.toString());
+        convertFromRawToEncoded(result.address.toString());
         console.log(result);
       })
       .catch((error) => console.log("error", error));
@@ -232,7 +233,6 @@ function App() {
       })
       .catch((error) => console.log("error", error));
   }
-
   function viewTXStatus(id, stepNumber) {
     var myHeaders = new Headers();
     myHeaders.append("Content-Type", "application/json");
@@ -254,7 +254,7 @@ function App() {
             setStep1Status(result.status);
             if (result.status === "complete" && moneroTXCreated === false) {
               setMoneroTXCreated(true);
-              createXMRToBTCTransaction(amountOfXMRToReceive);
+              createXMRToBTCTransaction(amountOfXMRToReceive, finalBTCAddress);
             }
           } else if (stepNumber === 2) {
             setStep2Status(result.status);
@@ -263,21 +263,26 @@ function App() {
       })
       .catch((error) => console.log("error", error));
   }
-  //wait on XMR wallet to recieve
-  //wait on BTC wallet to receive
-  setInterval(() => {
-    if (step1ID !== "" && step1ID !== undefined && step1Status !== "complete") {
-      viewTXStatus(step1ID, 1);
-    }
-    if (step2ID !== "" && step2ID !== undefined && step2Status !== "complete") {
-      viewTXStatus(step2ID, 2);
-    }
-  }, 10000);
+  useEffect(() => {
+    //wait on XMR wallet to recieve
+    //wait on BTC wallet to receive
+    const interval = setInterval(() => {
+      console.log("interval started");
+      if (step1ID !== "" && step1ID !== undefined && step1Status !== "complete") {
+        viewTXStatus(step1ID, 1);
+      }
+      if (step2ID !== "" && step2ID !== undefined && step2Status !== "complete") {
+        viewTXStatus(step2ID, 2);
+      }
+      console.log("interval ran");
+    }, 10000);
+  });
+
   //createXMRToBTCTransaction
-  function createXMRToBTCTransaction(amount) {
+  function createXMRToBTCTransaction(amount, bitcoinAddress) {
     var myHeaders = new Headers();
     myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ amount, bitcoinAddress: finalBTCAddress });
+    let raw = JSON.stringify({ amount, bitcoinAddress });
     var requestOptions = {
       method: "POST",
       headers: myHeaders,
@@ -321,6 +326,8 @@ function App() {
       <button onClick={getMinAmount}>Get Minimum Amount</button>
       <p>Minimum Amount needed to send: {minAmount}</p>
       <input value={amountOfBTCToSend} onChange={handleInput1Change}></input>
+      <label for="btc_final">Address to send the untraceable BTC: </label>
+      <input id="btc_final" value={finalBTCAddress} onChange={handleInput2Change}></input>
       <button onClick={estimateReceived.bind(this, amountOfBTCToSend)}>Estimate Received Amount</button>
       <p>
         Swap will take between: {lowTime * 2} to {highTime * 2} minutes

@@ -1,4 +1,4 @@
-import * as moneroTs from "monero-ts";
+const moneroTs = require("monero-ts");
 const api_key = require("./config.js");
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, "build")));
 let PORT = 3000;
 app.get("/getMinAmount", async function (req, res) {
   let minAmount = await getMinAmountFromBTCtoXMR();
-  res.send(minAmount);
+  res.send({ minAmount });
 });
 let cache = {};
 app.get("/createMoneroWallet", async function (req, res) {
@@ -27,19 +27,19 @@ app.get("/createMoneroWallet", async function (req, res) {
   } else {
     if (cache[ipAddress] > timestamp - 60000) {
       let address = "Rate limited";
-      res.send(address);
+      res.send({ address });
       return;
     } else {
       cache[ipAddress] = timestamp;
     }
   }
   let address = await createMoneroWallet(ipAddress);
-  res.send(address);
+  res.send({ address });
 });
 app.post("/sendXMR", async function (req, res) {
   //TODO: validate IP with userAddress
   let transactionStatus = await sendMonero(req.body.address, req.body.userXMRAddress);
-  res.send(transactionStatus);
+  res.send({ transactionStatus });
 });
 app.post("/estimate", async function (req, res) {
   let estimated = await estimateRecieved(req.body.amount, req.body.path);
@@ -72,10 +72,14 @@ app.post("/createXMRToBTCTX", async function (req, res) {
   );
   res.send(preTransactionStats);
 });
-const walletRPC = await moneroTs.connectToWalletRpc("http://localhost:28084", "rpc_user", "abc123");
+let walletRPC;
+async function initialize() {
+  walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
+}
+initialize();
 
 const ipToWalletIndices = {};
-const highestIndex = [1, 1];
+const highestIndex = [0, 1];
 const walletIndexToAddress = {};
 const walletIndexToIP = {};
 const addressToIndices = {};
@@ -93,11 +97,13 @@ async function createMoneroWallet(ipAddress) {
 
     addressToIndices[moneroAddress] = [nextIndex, nextSubIndex];
     walletIndexToAddress[nextIndex + "," + nextSubIndex] = moneroAddress;
+    console.log(100, ipToWalletIndices[ipAddress]);
     return moneroAddress;
   } else {
     let subIndex = ipToWalletIndices[ipAddress][1];
     let index = ipToWalletIndices[ipAddress][0];
     let moneroAddress = await walletRPC.getAddress(index, subIndex);
+    console.log(106, ipToWalletIndices[ipAddress]);
     return moneroAddress;
   }
 }
@@ -124,7 +130,8 @@ async function sendMonero(to, from, amount) {
     amount: formattedAmount, //(denominated in atomic units)
     relay: false, // create transaction and relay to the network if true
   });
-  await walletRPC.relayTx(createdTx); // relay the transaction
+  let status = await walletRPC.relayTx(createdTx); // relay the transaction
+  return status;
 }
 async function getMinAmountFromBTCtoXMR() {
   const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
@@ -142,6 +149,7 @@ async function estimateRecieved(amount, pathString) {
 function trim(num, maxDec) {
   let d = false;
   let c = 0;
+  let res = "";
   for (let i = 0; i < num.length && c < maxDec; i++) {
     if (num[i] == ".") {
       d = true;
@@ -150,7 +158,9 @@ function trim(num, maxDec) {
         c++;
       }
     }
+    res += num[i];
   }
+  return res;
 }
 async function getTransactionStatus(id) {
   const response = await fetch("https://api.changenow.io/v1/transactions/" + id + "/" + api_key);
@@ -170,7 +180,19 @@ async function createTX(url, amount, address, from, to) {
     refundAddress: "",
     refundExtraId: "",
   };
-
+  /*Example Response:
+  {
+  "payinAddress": "328E95juhLbXeDDVDR9thh58MtCsnKuvf6",
+  "payoutAddress": "0x57f31ad4b64095347F87eDB1675566DAfF5EC886",
+  "payoutExtraId": "",
+  "fromCurrency": "btc",
+  "toCurrency": "eth",
+  "refundAddress": "",
+  "refundExtraId": "",
+  "id": "33d9b8e1867579",
+  "amount": 74.7999317
+}*/
+  console.log(JSON.stringify(data));
   const response = await fetch(url, {
     method: "POST", // *GET, POST, PUT, DELETE, etc.
     mode: "cors", // no-cors, *cors, same-origin
@@ -186,18 +208,6 @@ async function createTX(url, amount, address, from, to) {
   });
   let decoded = await response.json(); // parses JSON response into native JavaScript objects
   return decoded;
-  /*Example Response:
-  {
-  "payinAddress": "328E95juhLbXeDDVDR9thh58MtCsnKuvf6",
-  "payoutAddress": "0x57f31ad4b64095347F87eDB1675566DAfF5EC886",
-  "payoutExtraId": "",
-  "fromCurrency": "btc",
-  "toCurrency": "eth",
-  "refundAddress": "",
-  "refundExtraId": "",
-  "id": "33d9b8e1867579",
-  "amount": 74.7999317
-}*/
 }
 
 app.listen(PORT, () => {
