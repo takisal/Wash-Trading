@@ -57,6 +57,7 @@ function App() {
   const [step2Status, setStep2Status] = useState("");
   const [destinationXMRAddress, setDestinationXMRAddress] = useState("");
   const [moneroTXCreated, setMoneroTXCreated] = useState(false);
+  const [interval, setScopedInterval] = useState(null);
   function convertFromEncodedToRaw(data) {
     return encoding.decode(data).toString();
   }
@@ -69,17 +70,20 @@ function App() {
   const createXMRWallet = useCallback(async () => {
     setEncodedMoneroWallet("waiting");
     console.log("initializing monero ");
-    let address = createMoneroWallet();
-    console.log(address);
-    setUserXMRAddress(address);
-    convertFromRawToEncoded(address);
-  }, []);
+    var requestOptions = {
+      method: "GET",
+      redirect: "follow",
+    };
 
-  useEffect(() => {
-    if (encodedMoneroWallet === "") {
-      createXMRWallet();
-    }
-  }, [encodedMoneroWallet, createXMRWallet]);
+    fetch("http://localhost:3000/createMoneroWallet", requestOptions)
+      .then((response) => response.json())
+      .then((result) => {
+        setUserXMRAddress(result.address.toString());
+        convertFromRawToEncoded(result.address.toString());
+        console.log(result);
+      })
+      .catch((error) => console.log("error", error));
+  }, []);
 
   function getMinAmount() {
     var requestOptions = {
@@ -194,21 +198,6 @@ function App() {
     }
     return seed;
   }
-  async function createMoneroWallet() {
-    var requestOptions = {
-      method: "GET",
-      redirect: "follow",
-    };
-
-    fetch("http://localhost:3000/createMoneroWallet", requestOptions)
-      .then((response) => response.json())
-      .then((result) => {
-        setUserXMRAddress(result.address.toString());
-        convertFromRawToEncoded(result.address.toString());
-        console.log(result);
-      })
-      .catch((error) => console.log("error", error));
-  }
 
   function createBTCtoXMRTransaction(amount) {
     var myHeaders = new Headers();
@@ -233,41 +222,79 @@ function App() {
       })
       .catch((error) => console.log("error", error));
   }
-  function viewTXStatus(id, stepNumber) {
-    var myHeaders = new Headers();
-    myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ id });
-    var requestOptions = {
-      method: "POST",
-      headers: myHeaders,
-      redirect: "follow",
-      body: raw,
-    };
-    fetch("http://localhost:3000/transactionStatus", requestOptions)
-      .then((response) => response.json())
-      .then((result) => {
-        console.log("got response: ", result);
-        if (result.status === undefined) {
-          console.log("Could not got TX status");
-        } else {
-          if (stepNumber === 1) {
-            setStep1Status(result.status);
-            if (result.status === "complete" && moneroTXCreated === false) {
-              setMoneroTXCreated(true);
-              createXMRToBTCTransaction(amountOfXMRToReceive, finalBTCAddress);
-            }
-          } else if (stepNumber === 2) {
-            setStep2Status(result.status);
+  //createXMRToBTCTransaction
+  const createXMRToBTCTransaction = useCallback(
+    (amount, bitcoinAddress) => {
+      var myHeaders = new Headers();
+      myHeaders.append("Content-Type", "application/json");
+      let raw = JSON.stringify({ amount, bitcoinAddress });
+      var requestOptions = {
+        method: "POST",
+        headers: myHeaders,
+        redirect: "follow",
+        body: raw,
+      };
+      fetch("http://localhost:3000/createXMRToBTCTX", requestOptions)
+        .then((response) => response.json())
+        .then((result) => {
+          console.log("got response: ", result);
+          if (result.payinAddress === undefined) {
+            setDestinationXMRAddress("Error beggining process. Error communicating with ChangeNow API");
+          } else {
+            //send XMR
+            setDestinationXMRAddress(result.payinAddress);
+            setStep2ID(result.id);
+            sendXMRToAddress(destinationXMRAddress);
           }
-        }
-      })
-      .catch((error) => console.log("error", error));
-  }
+        })
+        .catch((error) => console.log("error", error));
+    },
+    [destinationXMRAddress]
+  );
+  const viewTXStatus = useCallback(
+    (id, stepNumber) => {
+      console.log("viewTXStatus");
+      var myHeaders = new Headers();
+      myHeaders.append("Content-Type", "application/json");
+      let raw = JSON.stringify({ id });
+      var requestOptions = {
+        method: "POST",
+        headers: myHeaders,
+        redirect: "follow",
+        body: raw,
+      };
+      fetch("http://localhost:3000/transactionStatus", requestOptions)
+        .then((response) => response.json())
+        .then((result) => {
+          console.log("got response: ", result);
+          if (result.status === undefined) {
+            console.log("Could not got TX status");
+          } else {
+            if (stepNumber === 1) {
+              setStep1Status(result.status);
+              if (result.status === "complete" && moneroTXCreated === false) {
+                setMoneroTXCreated(true);
+                createXMRToBTCTransaction(amountOfXMRToReceive, finalBTCAddress);
+              }
+            } else if (stepNumber === 2) {
+              setStep2Status(result.status);
+            }
+          }
+        })
+        .catch((error) => console.log("error", error));
+    },
+    [amountOfXMRToReceive, finalBTCAddress, moneroTXCreated, createXMRToBTCTransaction]
+  );
+  useEffect(() => {
+    if (encodedMoneroWallet === "") {
+      createXMRWallet();
+    }
+  }, [encodedMoneroWallet, createXMRWallet]);
   useEffect(() => {
     //wait on XMR wallet to recieve
     //wait on BTC wallet to receive
-    const interval = setInterval(() => {
-      console.log("interval started");
+    let newInterval = setInterval(() => {
+      console.log("interval started", { step1ID, step1Status });
       if (step1ID !== "" && step1ID !== undefined && step1Status !== "complete") {
         viewTXStatus(step1ID, 1);
       }
@@ -276,34 +303,8 @@ function App() {
       }
       console.log("interval ran");
     }, 10000);
-  });
-
-  //createXMRToBTCTransaction
-  function createXMRToBTCTransaction(amount, bitcoinAddress) {
-    var myHeaders = new Headers();
-    myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ amount, bitcoinAddress });
-    var requestOptions = {
-      method: "POST",
-      headers: myHeaders,
-      redirect: "follow",
-      body: raw,
-    };
-    fetch("http://localhost:3000/createXMRToBTCTX", requestOptions)
-      .then((response) => response.json())
-      .then((result) => {
-        console.log("got response: ", result);
-        if (result.payinAddress === undefined) {
-          setDestinationXMRAddress("Error beggining process. Error communicating with ChangeNow API");
-        } else {
-          //send XMR
-          setDestinationXMRAddress(result.payinAddress);
-          setStep2ID(result.id);
-          sendXMRToAddress(destinationXMRAddress);
-        }
-      })
-      .catch((error) => console.log("error", error));
-  }
+    return () => clearInterval(newInterval);
+  }, [interval, step1ID, step1Status, step2ID, step2Status, viewTXStatus]);
   function sendXMRToAddress(address, userXMRAddress) {
     //send XMR
     var myHeaders = new Headers();

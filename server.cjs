@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, "build")));
 let PORT = 3000;
 app.get("/getMinAmount", async function (req, res) {
   let minAmount = await getMinAmountFromBTCtoXMR();
-  res.send({ minAmount });
+  res.send(minAmount);
 });
 let cache = {};
 app.get("/createMoneroWallet", async function (req, res) {
@@ -47,9 +47,11 @@ app.post("/estimate", async function (req, res) {
 });
 app.post("/transactionStatus", async function (req, res) {
   let statusResult = await getTransactionStatus(req.body.id);
+  console.log({ statusResult });
   res.send(statusResult);
 });
 app.post("/createBTCToXMRTX", async function (req, res) {
+  console.log("Creating BTC to XMR transaction");
   let { amount, moneroAddress } = req.body;
   let preTransactionStats = await createTX(
     "https://api.changenow.io/v1/transactions/" + api_key,
@@ -62,6 +64,7 @@ app.post("/createBTCToXMRTX", async function (req, res) {
   res.send(preTransactionStats);
 });
 app.post("/createXMRToBTCTX", async function (req, res) {
+  console.log("Creating XMR to BTC transaction");
   let { amount, bitcoinAddress } = req.body;
   let preTransactionStats = await createTX(
     "https://api.changenow.io/v1/transactions/" + api_key,
@@ -151,7 +154,7 @@ function trim(num, maxDec) {
   let c = 0;
   let res = "";
   for (let i = 0; i < num.length && c < maxDec; i++) {
-    if (num[i] == ".") {
+    if (num[i] === ".") {
       d = true;
     } else {
       if (d) {
