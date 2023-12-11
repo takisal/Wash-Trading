@@ -1,3 +1,4 @@
+import * as moneroTs from "monero-ts";
 const api_key = require("./config.js");
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -15,6 +16,30 @@ let PORT = 3000;
 app.get("/getMinAmount", async function (req, res) {
   let minAmount = await getMinAmountFromBTCtoXMR();
   res.send(minAmount);
+});
+let cache = {};
+app.get("/createMoneroWallet", async function (req, res) {
+  let ipAddress = req.socket.remoteAddress;
+  let timestamp = +new Date();
+  console.log({ timestamp });
+  if (cache[ipAddress] === undefined) {
+    cache[ipAddress] = timestamp;
+  } else {
+    if (cache[ipAddress] > timestamp - 60000) {
+      let address = "Rate limited";
+      res.send(address);
+      return;
+    } else {
+      cache[ipAddress] = timestamp;
+    }
+  }
+  let address = await createMoneroWallet(ipAddress);
+  res.send(address);
+});
+app.post("/sendXMR", async function (req, res) {
+  //TODO: validate IP with userAddress
+  let transactionStatus = await sendMonero(req.body.address, req.body.userXMRAddress);
+  res.send(transactionStatus);
 });
 app.post("/estimate", async function (req, res) {
   let estimated = await estimateRecieved(req.body.amount, req.body.path);
@@ -47,6 +72,60 @@ app.post("/createXMRToBTCTX", async function (req, res) {
   );
   res.send(preTransactionStats);
 });
+const walletRPC = await moneroTs.connectToWalletRpc("http://localhost:28084", "rpc_user", "abc123");
+
+const ipToWalletIndices = {};
+const highestIndex = [1, 1];
+const walletIndexToAddress = {};
+const walletIndexToIP = {};
+const addressToIndices = {};
+async function createMoneroWallet(ipAddress) {
+  if (ipToWalletIndices[ipAddress] === undefined) {
+    let nextSubIndex = highestIndex[1] + 1;
+    let nextIndex = highestIndex[0];
+    if (nextSubIndex === 10) {
+      nextSubIndex = 0;
+      nextIndex = 0;
+    }
+    ipToWalletIndices[ipAddress] = [nextIndex, nextSubIndex];
+    walletIndexToIP[nextIndex + "," + nextSubIndex] = ipAddress;
+    let moneroAddress = await walletRPC.getAddress(nextIndex, nextSubIndex);
+
+    addressToIndices[moneroAddress] = [nextIndex, nextSubIndex];
+    walletIndexToAddress[nextIndex + "," + nextSubIndex] = moneroAddress;
+    return moneroAddress;
+  } else {
+    let subIndex = ipToWalletIndices[ipAddress][1];
+    let index = ipToWalletIndices[ipAddress][0];
+    let moneroAddress = await walletRPC.getAddress(index, subIndex);
+    return moneroAddress;
+  }
+}
+async function sendMonero(to, from, amount) {
+  let formattedAmount = "";
+  let decimalPassed = false;
+  let zeroesToAdd = 12;
+  for (let i = 0; i < amount.length; i++) {
+    if (amount[i] === ".") {
+      decimalPassed = true;
+    } else {
+      formattedAmount += amount[i];
+      if (decimalPassed === true) {
+        zeroesToAdd--;
+      }
+    }
+  }
+  formattedAmount += "0".repeat(zeroesToAdd);
+  let walletIndices = addressToIndices[from];
+  let createdTx = await walletRPC.createTx({
+    accountIndex: walletIndices[0],
+    subaddressIndex: walletIndices[1],
+    address: to,
+    amount: formattedAmount, //(denominated in atomic units)
+    relay: false, // create transaction and relay to the network if true
+  });
+  await walletRPC.relayTx(createdTx); // relay the transaction
+}
 async function getMinAmountFromBTCtoXMR() {
   const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
   const minAmount = await response.json();

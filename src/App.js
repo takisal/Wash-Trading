@@ -1,6 +1,8 @@
 import "./App.css";
 import { useState, useEffect, useCallback } from "react";
 import encoding from "./customEncodingScheme.js";
+import words from "./words";
+
 /*
 API - Get the minimum exchange amount for the selected currency pair with the
 
@@ -46,8 +48,7 @@ function App() {
   const [amountOfBTCToReceive, setAmountOfBTCToReceive] = useState(0);
   const [amountOfBTCToSend, setAmountOfBTCToSend] = useState(0);
   const [destinationBTCAddress, setDestinationBTCAddress] = useState("");
-  const [intermediateXMRAddress, setIntermediateXMRAddress] = useState("");
-  const [intermediateXMRPK, setIntermediateXMRPK] = useState("");
+  const [userXMRAddress, setUserXMRAddress] = useState("");
   const [encodedMoneroWallet, setEncodedMoneroWallet] = useState("");
   const [finalBTCAddress, setFinalBTCAddress] = useState("");
   const [step1ID, setStep1ID] = useState("");
@@ -56,6 +57,9 @@ function App() {
   const [step2Status, setStep2Status] = useState("");
   const [destinationXMRAddress, setDestinationXMRAddress] = useState("");
   const [moneroTXCreated, setMoneroTXCreated] = useState(false);
+  const [stateDaemon, setStateDaemon] = useState(null);
+  const [stateHeight, setStateHeight] = useState(null);
+  const [stateTxsInPool, setStateTxsInPool] = useState(null);
   function convertFromEncodedToRaw(data) {
     return encoding.decode(data).toString();
   }
@@ -65,11 +69,13 @@ function App() {
     setEncodedMoneroWallet(encoded.toString());
     return encoded;
   }
-  const createXMRWallet = useCallback(() => {
-    let { moneroAddress, moneroPrivKey } = generateMoneroAddressAndPK();
-    setIntermediateXMRAddress(moneroAddress);
-    setIntermediateXMRPK(moneroPrivKey);
-    convertFromRawToEncoded(moneroAddress, moneroPrivKey);
+
+  const createXMRWallet = useCallback(async () => {
+    setEncodedMoneroWallet("waiting");
+    console.log("initializing monero ");
+    let address = createMoneroWallet();
+    setUserXMRAddress(address);
+    convertFromRawToEncoded(address);
   }, []);
 
   useEffect(() => {
@@ -176,15 +182,37 @@ function App() {
   function handleInput1Change(e) {
     setAmountOfBTCToSend(e.target.value);
   }
-  function generateMoneroAddressAndPK() {
-    let moneroAddress = "asdads12337";
-    let moneroPrivKey = "test44";
-    return { moneroAddress, moneroPrivKey };
+  function generateSeed() {
+    let seed = "";
+    let chosenWords = new Set();
+    for (let i = 0; i < 14; i++) {
+      let chosenNumber = Math.floor(Math.random() * words.length);
+      if (!chosenWords.has(chosenNumber)) {
+        chosenWords.add(chosenNumber);
+        seed += words[chosenNumber];
+      }
+    }
+    return seed;
   }
+  async function createMoneroWallet() {
+    var requestOptions = {
+      method: "GET",
+      redirect: "follow",
+    };
+
+    fetch("http://localhost:3000/createMoneroWallet", requestOptions)
+      .then((response) => response.json())
+      .then((result) => {
+        setUserXMRAddress(result.address.toString());
+        console.log(result);
+      })
+      .catch((error) => console.log("error", error));
+  }
+
   function createBTCtoXMRTransaction(amount) {
     var myHeaders = new Headers();
     myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ amount, moneroAddress: intermediateXMRAddress });
+    let raw = JSON.stringify({ amount, moneroAddress: userXMRAddress });
     var requestOptions = {
       method: "POST",
       headers: myHeaders,
@@ -271,8 +299,21 @@ function App() {
       })
       .catch((error) => console.log("error", error));
   }
-  function sendXMRToAddress(address) {
+  function sendXMRToAddress(address, userXMRAddress) {
     //send XMR
+    var myHeaders = new Headers();
+    myHeaders.append("Content-Type", "application/json");
+    let raw = JSON.stringify({ address, userXMRAddress });
+    var requestOptions = {
+      method: "POST",
+      headers: myHeaders,
+      redirect: "follow",
+      body: raw,
+    };
+    fetch("http://localhost:3000/sendXMR", requestOptions)
+      .then((response) => response.json())
+      .then((result) => {})
+      .catch((error) => console.log("error", error));
   }
 
   return (
