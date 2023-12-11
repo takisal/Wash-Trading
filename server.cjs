@@ -17,6 +17,7 @@ app.get("/getMinAmount", async function (req, res) {
   let minAmount = await getMinAmountFromBTCtoXMR();
   res.send(minAmount);
 });
+
 let cache = {};
 app.get("/createMoneroWallet", async function (req, res) {
   let ipAddress = req.socket.remoteAddress;
@@ -26,7 +27,7 @@ app.get("/createMoneroWallet", async function (req, res) {
     cache[ipAddress] = timestamp;
   } else {
     if (cache[ipAddress] > timestamp - 60000) {
-      let address = "Rate limited";
+      let address = await createMoneroWallet(ipAddress);
       res.send({ address });
       return;
     } else {
@@ -38,7 +39,8 @@ app.get("/createMoneroWallet", async function (req, res) {
 });
 app.post("/sendXMR", async function (req, res) {
   //TODO: validate IP with userAddress
-  let transactionStatus = await sendMonero(req.body.address, req.body.userXMRAddress);
+  console.log(req.body);
+  let transactionStatus = await sendMonero(req.body.address, req.body.userXMRAddress, req.body.amount);
   res.send({ transactionStatus });
 });
 app.post("/estimate", async function (req, res) {
@@ -63,19 +65,36 @@ app.post("/createBTCToXMRTX", async function (req, res) {
   console.log(preTransactionStats);
   res.send(preTransactionStats);
 });
-app.post("/createXMRToBTCTX", async function (req, res) {
-  console.log("Creating XMR to BTC transaction");
-  let { amount, bitcoinAddress } = req.body;
-  let preTransactionStats = await createTX(
-    "https://api.changenow.io/v1/transactions/" + api_key,
-    amount,
-    bitcoinAddress,
-    "xmr",
-    "btc"
-  );
-  res.send(preTransactionStats);
-});
 let walletRPC;
+app.post("/getGasXMR", async function (req, res) {
+  let amount = req.body.amount;
+  console.log(req.body);
+  let atomicAmount = convertFromFloatToBigIntX10_12(amount);
+  console.log({ atomicAmount });
+  let createdTx = await walletRPC.createTx({
+    accountIndex: 0,
+    address: "43oTJhyfJ5vageq8o1LPHyDVdM5iVdBEfev985yjhvLA9SunSQgnC4Jaab87ak6k7k53kNfMWit5q9TNuJKSTFVZVG25cFe",
+    amount: atomicAmount,
+    relay: false,
+  });
+  let fee = await createdTx.getFee();
+  let parsedFee = parseInt(fee) / 10 ** 12;
+  res.send({ estimatedGas: parsedFee });
+});
+async function queryAddressTotal(address) {
+  let amount = BigInt(0);
+  let transactions = await walletRPC.getTransfers({ isIncoming: true, address });
+  for (let i = 0; i < transactions.length; i++) {
+    amount += transactions[i].amount;
+  }
+  return amount;
+}
+
+app.post("/checkrpc", async function (req, res) {
+  console.log("Creating XMR to BTC transaction");
+
+  res.send("done");
+});
 async function initialize() {
   walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
 }
@@ -86,13 +105,15 @@ const highestIndex = [0, 1];
 const walletIndexToAddress = {};
 const walletIndexToIP = {};
 const addressToIndices = {};
+const IPtoAddress = {};
+//TODO: test new major index
 async function createMoneroWallet(ipAddress) {
   if (ipToWalletIndices[ipAddress] === undefined) {
     let nextSubIndex = highestIndex[1] + 1;
     let nextIndex = highestIndex[0];
     if (nextSubIndex === 10) {
       nextSubIndex = 0;
-      nextIndex = 0;
+      nextIndex = nextIndex + 1;
     }
     ipToWalletIndices[ipAddress] = [nextIndex, nextSubIndex];
     walletIndexToIP[nextIndex + "," + nextSubIndex] = ipAddress;
@@ -100,31 +121,39 @@ async function createMoneroWallet(ipAddress) {
 
     addressToIndices[moneroAddress] = [nextIndex, nextSubIndex];
     walletIndexToAddress[nextIndex + "," + nextSubIndex] = moneroAddress;
+    IPtoAddress[ipAddress] = moneroAddress;
     console.log(100, ipToWalletIndices[ipAddress]);
     return moneroAddress;
   } else {
     let subIndex = ipToWalletIndices[ipAddress][1];
     let index = ipToWalletIndices[ipAddress][0];
     let moneroAddress = await walletRPC.getAddress(index, subIndex);
+    IPtoAddress[ipAddress] = moneroAddress;
     console.log(106, ipToWalletIndices[ipAddress]);
     return moneroAddress;
   }
 }
 async function sendMonero(to, from, amount) {
+  console.log({ to, from, amount });
   let formattedAmount = "";
   let decimalPassed = false;
   let zeroesToAdd = 12;
-  for (let i = 0; i < amount.length; i++) {
-    if (amount[i] === ".") {
+  let amountStr = amount.toString();
+  while (amountStr.length > 0 && amountStr[0] === "0") {
+    amountStr = amountStr.slice(1);
+  }
+  for (let i = 0; i < amountStr.length; i++) {
+    if (amountStr[i] === ".") {
       decimalPassed = true;
     } else {
-      formattedAmount += amount[i];
+      formattedAmount += amountStr[i];
       if (decimalPassed === true) {
         zeroesToAdd--;
       }
     }
   }
   formattedAmount += "0".repeat(zeroesToAdd);
+  console.log({ formattedAmount });
   let walletIndices = addressToIndices[from];
   let createdTx = await walletRPC.createTx({
     accountIndex: walletIndices[0],
@@ -148,7 +177,53 @@ async function estimateRecieved(amount, pathString) {
   let jsonResponse = await response.json();
   return jsonResponse;
 }
-
+function convertFromFloatToBigIntX10_12(amount) {
+  if (amount === 0) {
+    return 0;
+  }
+  let str = "";
+  let amountStr = amount.toString();
+  let decimalCount = 0;
+  let decimalPassed = false;
+  console.log(amountStr);
+  while (amountStr.length > 0 && amountStr[0] === "0") {
+    amountStr = amountStr.slice(1);
+  }
+  for (let i = 0; i < amountStr.length && decimalCount < 12; i++) {
+    if (amountStr[i] === ".") {
+      decimalPassed = true;
+    } else {
+      if (decimalPassed === true) {
+        decimalCount++;
+      }
+      str += amountStr[i];
+    }
+  }
+  str += "0".repeat(12 - decimalCount);
+  console.log({ str });
+  return BigInt(str);
+}
+app.post("/createXMRToBTCTX", async function (req, res) {
+  console.log("Creating XMR to BTC transaction");
+  let { amount, bitcoinAddress } = req.body;
+  //make sure user is entitled to >= amount
+  let moneroAddress = IPtoAddress[req.socket.remoteAddress];
+  let entitledAmount = queryAddressTotal(moneroAddress);
+  let atomicAmount = convertFromFloatToBigIntX10_12(amount);
+  console.log({ moneroAddress, entitledAmount, atomicAmount });
+  if (atomicAmount > entitledAmount) {
+    res.send({ Status: "Could not send. Not entitled to enough XMR" });
+    return;
+  }
+  let preTransactionStats = await createTX(
+    "https://api.changenow.io/v1/transactions/" + api_key,
+    amount,
+    bitcoinAddress,
+    "xmr",
+    "btc"
+  );
+  res.send(preTransactionStats);
+});
 function trim(num, maxDec) {
   let d = false;
   let c = 0;

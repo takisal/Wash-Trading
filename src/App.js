@@ -58,6 +58,8 @@ function App() {
   const [destinationXMRAddress, setDestinationXMRAddress] = useState("");
   const [moneroTXCreated, setMoneroTXCreated] = useState(false);
   const [interval, setScopedInterval] = useState(null);
+  const [gasXMR, setGasXMR] = useState(0);
+  const [hardcodedGas, setHardcodedGas] = useState(0);
   function convertFromEncodedToRaw(data) {
     return encoding.decode(data).toString();
   }
@@ -94,7 +96,7 @@ function App() {
     fetch("http://localhost:3000/getMinAmount", requestOptions)
       .then((response) => response.json())
       .then((result) => {
-        setMinAmount(result.minAmount.toString());
+        setMinAmount((result.minAmount * 2).toString());
         console.log(result);
       })
       .catch((error) => console.log("error", error));
@@ -133,7 +135,7 @@ function App() {
         setLowTime(lowEndTime);
         setHighTime(highEndTime);
         setAmountOfXMRToReceive(result.estimatedAmount);
-        estimateReceivedStep2(result.estimatedAmount);
+        estimateReceivedStep2(result.estimatedAmount - hardcodedGas);
         console.log(
           "Time Low Estimate: ",
           lowEndTime,
@@ -216,6 +218,9 @@ function App() {
         if (result.payinAddress === undefined) {
           setDestinationBTCAddress("Error beggining process. Error communicating with ChangeNow API");
         } else {
+          if (result.expectedReceiveAmount !== undefined) {
+            setAmountOfXMRToReceive(result.expectedReceiveAmount);
+          }
           setDestinationBTCAddress(result.payinAddress);
           setStep1ID(result.id);
         }
@@ -244,13 +249,18 @@ function App() {
             //send XMR
             setDestinationXMRAddress(result.payinAddress);
             setStep2ID(result.id);
-            sendXMRToAddress(destinationXMRAddress);
+            sendXMRToAddress(result.payinAddress, userXMRAddress, amount);
           }
         })
         .catch((error) => console.log("error", error));
     },
-    [destinationXMRAddress]
+    [userXMRAddress]
   );
+  function createXMRToBTCTransactionTest(amount, bitcoinAddress) {
+    setStep1Status("finished");
+    setMoneroTXCreated(true);
+    createXMRToBTCTransaction(amount - hardcodedGas, bitcoinAddress);
+  }
   const viewTXStatus = useCallback(
     (id, stepNumber) => {
       console.log("viewTXStatus");
@@ -272,9 +282,9 @@ function App() {
           } else {
             if (stepNumber === 1) {
               setStep1Status(result.status);
-              if (result.status === "complete" && moneroTXCreated === false) {
+              if (result.status === "finished" && moneroTXCreated === false) {
                 setMoneroTXCreated(true);
-                createXMRToBTCTransaction(amountOfXMRToReceive, finalBTCAddress);
+                createXMRToBTCTransaction(result.amountReceive - hardcodedGas, finalBTCAddress);
               }
             } else if (stepNumber === 2) {
               setStep2Status(result.status);
@@ -283,9 +293,29 @@ function App() {
         })
         .catch((error) => console.log("error", error));
     },
-    [amountOfXMRToReceive, finalBTCAddress, moneroTXCreated, createXMRToBTCTransaction]
+    [finalBTCAddress, hardcodedGas, moneroTXCreated, createXMRToBTCTransaction]
   );
+  async function getGasXMR() {
+    var myHeaders = new Headers();
+    myHeaders.append("Content-Type", "application/json");
+    let raw = JSON.stringify({ amount: 0.2 });
+    var requestOptions = {
+      method: "POST",
+      headers: myHeaders,
+      redirect: "follow",
+      body: raw,
+    };
+
+    fetch("http://localhost:3000/getGasXMR", requestOptions)
+      .then((response) => response.json())
+      .then((result) => {
+        console.log(result);
+        setGasXMR(result.estimatedGas);
+      })
+      .catch((error) => console.log("error", error));
+  }
   useEffect(() => {
+    setHardcodedGas(0.02);
     if (encodedMoneroWallet === "") {
       createXMRWallet();
     }
@@ -295,21 +325,24 @@ function App() {
     //wait on BTC wallet to receive
     let newInterval = setInterval(() => {
       console.log("interval started", { step1ID, step1Status });
-      if (step1ID !== "" && step1ID !== undefined && step1Status !== "complete") {
+      //getGasXMR();
+      if (step1ID !== "" && step1ID !== undefined && step1Status !== "finished") {
         viewTXStatus(step1ID, 1);
       }
-      if (step2ID !== "" && step2ID !== undefined && step2Status !== "complete") {
+      if (step2ID !== "" && step2ID !== undefined && step2Status !== "finished") {
         viewTXStatus(step2ID, 2);
       }
       console.log("interval ran");
     }, 10000);
     return () => clearInterval(newInterval);
   }, [interval, step1ID, step1Status, step2ID, step2Status, viewTXStatus]);
-  function sendXMRToAddress(address, userXMRAddress) {
+  function sendXMRToAddress(address, userXMRAddress, amount) {
     //send XMR
     var myHeaders = new Headers();
     myHeaders.append("Content-Type", "application/json");
-    let raw = JSON.stringify({ address, userXMRAddress });
+
+    let raw = JSON.stringify({ address, userXMRAddress, amount });
+    console.log(raw, "raw");
     var requestOptions = {
       method: "POST",
       headers: myHeaders,
@@ -318,7 +351,9 @@ function App() {
     };
     fetch("http://localhost:3000/sendXMR", requestOptions)
       .then((response) => response.json())
-      .then((result) => {})
+      .then((result) => {
+        console.log("sendXMR result: ", result);
+      })
       .catch((error) => console.log("error", error));
   }
 
@@ -336,6 +371,10 @@ function App() {
       <p>You should receive: {amountOfBTCToReceive} untraceable BTC</p>
 
       <button onClick={createBTCtoXMRTransaction.bind(this, amountOfBTCToSend)}>Begin wash</button>
+      <button onClick={getGasXMR}>Estimate Monero fee</button>
+      <button onClick={createXMRToBTCTransactionTest.bind(this, amountOfBTCToSend, finalBTCAddress)}>
+        Dev button step 2
+      </button>
       <p>
         Before you begin, it is highly recommended you save this data securely incase there is an interuption and you
         need to resume the wash process at step 2: {encodedMoneroWallet}
@@ -346,8 +385,8 @@ function App() {
         {step2Status === "complete" && step1Status === "complete"
           ? "Complete!"
           : step1Status === "complete"
-          ? step2Status
-          : step1Status}
+          ? "Step 1: Complete \n Step 2: " + step2Status
+          : "Step 1: " + step1Status}
       </h3>
     </div>
   );
