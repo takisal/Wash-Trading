@@ -1,5 +1,6 @@
 const moneroTs = require("monero-ts");
 const api_key = require("./config.js");
+const moneroAddress = require("./appconfig.js");
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -13,11 +14,17 @@ app.use(bodyParser.json());
 app.use(cors());
 app.use(express.static(path.join(__dirname, "build")));
 let PORT = 3000;
+let walletRPC;
+const hardCodedXMRFee = 0.02;
+let destXMR = "8BddeK3YPhBSMQnMHqoj4NZYAbVDQkELde2GMKh599E92C9QuJgwQXzfdbXmTSfs7Y1dBxMwbaPzrZmGo8MYhmqmGdXSgtR";
+//===============================================================
+//Endpoints
+//===============================================================
+//Get
 app.get("/getMinAmount", async function (req, res) {
   let minAmount = await getMinAmountFromBTCtoXMR();
   res.send(minAmount);
 });
-
 let cache = {};
 app.get("/createMoneroWallet", async function (req, res) {
   let ipAddress = req.socket.remoteAddress;
@@ -37,12 +44,8 @@ app.get("/createMoneroWallet", async function (req, res) {
   let address = await createMoneroWallet(ipAddress);
   res.send({ address });
 });
-app.post("/sendXMR", async function (req, res) {
-  //TODO: validate IP with userAddress
-  console.log(req.body);
-  let transactionStatus = await sendMonero(req.body.address, req.body.userXMRAddress, req.body.amount);
-  res.send({ transactionStatus });
-});
+//Post requests
+
 app.post("/estimate", async function (req, res) {
   let estimated = await estimateRecieved(req.body.amount, req.body.path);
   res.send(estimated);
@@ -52,9 +55,148 @@ app.post("/transactionStatus", async function (req, res) {
   console.log({ statusResult });
   res.send(statusResult);
 });
-app.post("/createBTCToXMRTX", async function (req, res) {
+
+//===============================================================
+//Linked List
+//===============================================================
+let trackedSwaps = { prev: null, next: null };
+let lastNode = null;
+const hashToData = {};
+const finishedSet = new Set();
+function removeNode(node) {
+  hashToData[node.hash] = undefined;
+  if (node.prev == null && node.next == null) {
+    lastNode = null;
+  } else if (node.prev == null) {
+    node.next.prev = null;
+    trackedSwaps = node.next;
+  } else if (node.next == null) {
+    node.prev.next = null;
+    lastNode = node.prev;
+  } else {
+    node.prev.next = node.next;
+    node.next.prev = node.prev;
+  }
+}
+function addNode(node) {
+  hashToData[node.hash] = node;
+  if (lastNode == null) {
+    trackedSwaps.data = node;
+    lastNode = trackedSwaps;
+  } else {
+    lastNode.next = { data: node, prev: lastNode, next: null };
+    lastNode = lastNode.next;
+  }
+}
+
+function iterator(curNode) {
+  getTransactionStatus(curNode.data.id).then((result) => {
+    curNode.data.status = result.status;
+    if (result.status === "finished") {
+      if (curNode.data.stage === 1) {
+        createTX(
+          "https://api.changenow.io/v1/transactions/" + api_key,
+          result.amountReceive - hardCodedXMRFee,
+          curNode.data.userDestBTC,
+          "xmr",
+          "btc"
+        )
+          .then((stepResult) => {
+            console.log({ stepResult });
+            if (stepResult !== undefined && stepResult.payinAddress !== undefined) {
+              walletRPC.getUnlockedBalance(0, 2).then((unlockedBalance) => {
+                let neededMonero = convertFromFloatToBigIntX10_12(result.amountReceive - hardCodedXMRFee);
+                if (unlockedBalance >= neededMonero) {
+                  walletRPC
+                    .createTx({
+                      accountIndex: 0,
+                      subaddressIndex: 2,
+                      address: stepResult.payinAddress,
+                      amount: neededMonero.toString(), //(denominated in atomic units)
+                      relay: false, // create transaction and relay to the network if true
+                    })
+                    .then((createdTx) => walletRPC.relayTx(createdTx))
+                    .then((status) => {
+                      curNode.data.stage = 2;
+                      curNode.data.status = status;
+                    });
+                } else {
+                  curNode.data.stage = 1.5;
+                  curNode.data.neededMonero = neededMonero;
+                  curNode.data.changeNowXMRAddress = stepResult.payinAddress;
+                }
+              });
+            }
+          })
+          .catch((err) => {
+            console.log("error: ", err);
+          });
+      } else if (curNode.data.stage === 1.5) {
+        walletRPC.getUnlockedBalance(0, 2).then((unlockedBalance) => {
+          let neededMonero = convertFromFloatToBigIntX10_12(result.amountReceive - hardCodedXMRFee);
+          if (unlockedBalance >= neededMonero) {
+            walletRPC
+              .createTx({
+                accountIndex: 0,
+                subaddressIndex: 2,
+                address: curNode.data.changeNowXMRAddress,
+                amount: neededMonero.toString(), //(denominated in atomic units)
+                relay: false, // create transaction and relay to the network if true
+              })
+              .then((createdTx) => walletRPC.relayTx(createdTx))
+              .then((status) => {
+                curNode.data.stage = 2;
+                curNode.data.status = status;
+              });
+          }
+        });
+      } else {
+        finishedSet.add(curNode.data.hash);
+        removeNode(curNode);
+      }
+    }
+  });
+  setTimeout(() => {
+    if (curNode.next != null) {
+      iterator(curNode.next);
+    }
+  }, 1000);
+}
+
+setInterval(() => {
+  if (lastNode == null) {
+    return;
+  }
+  if (trackedSwaps != null) {
+    iterator(trackedSwaps);
+  }
+  //TODO: change to minute
+}, 10000);
+//==================================================================================
+//Get TX status
+//==================================================================================
+app.post("/txStatus", async function (req, res) {
+  console.log("tx status called");
+  let hash = req.body.id;
+  let data = hashToData[hash];
+  if (data === undefined) {
+    if (finishedSet.has(hash)) {
+      data = { stage: 2, status: "finished" };
+    } else {
+      data = { stage: 0, status: "nonexistant" };
+    }
+    res.send({ stage: data.stage, status: data.status });
+  } else {
+    res.send({ stage: data.stage, status: data.status });
+  }
+});
+
+//==================================================================================
+//Start TX
+//==================================================================================
+app.post("/startTX", async function (req, res) {
   console.log("Creating BTC to XMR transaction");
-  let { amount, moneroAddress } = req.body;
+  let { amount, hash } = req.body;
   let preTransactionStats = await createTX(
     "https://api.changenow.io/v1/transactions/" + api_key,
     amount,
@@ -63,9 +205,21 @@ app.post("/createBTCToXMRTX", async function (req, res) {
     "xmr"
   );
   console.log(preTransactionStats);
+  //add to setInterval check
+  addNode({
+    time: +new Date(),
+    id: preTransactionStats.id,
+    userDestBTC: req.body.address,
+    hash,
+    status: "waiting",
+    stage: 1,
+  });
   res.send(preTransactionStats);
 });
-let walletRPC;
+
+//==================================================================================
+//Daemon queries
+//==================================================================================
 app.post("/getGasXMR", async function (req, res) {
   let amount = req.body.amount;
   console.log(req.body);
@@ -81,24 +235,80 @@ app.post("/getGasXMR", async function (req, res) {
   let parsedFee = parseInt(fee) / 10 ** 12;
   res.send({ estimatedGas: parsedFee });
 });
-async function queryAddressTotal(address) {
-  let amount = BigInt(0);
-  let transactions = await walletRPC.getTransfers({ isIncoming: true, address });
-  for (let i = 0; i < transactions.length; i++) {
-    amount += transactions[i].amount;
+
+async function getMinAmountFromBTCtoXMR() {
+  const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
+  const minAmount = await response.json();
+  return minAmount;
+}
+
+async function estimateRecieved(amount, pathString) {
+  let reqStr = "https://api.changenow.io/v1/exchange-amount/" + amount + "/" + pathString + "?api_key=" + api_key;
+
+  let response = await fetch(reqStr);
+  let jsonResponse = await response.json();
+  return jsonResponse;
+}
+async function getTransactionStatus(id) {
+  const response = await fetch("https://api.changenow.io/v1/transactions/" + id + "/" + api_key);
+  let backupStatus;
+  let statusR = await response.json().catch((err) => {
+    backupStatus = { status: "nonexistant" };
+  });
+  if (backupStatus !== undefined) {
+    statusR = backupStatus;
   }
-  return amount;
+  return statusR;
 }
 
-app.post("/checkrpc", async function (req, res) {
-  console.log("Creating XMR to BTC transaction");
-
-  res.send("done");
-});
-async function initialize() {
-  walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
+//==================================================================================
+//Miscellaneous
+//==================================================================================
+function convertFromFloatToBigIntX10_12(amount) {
+  if (amount === 0) {
+    return 0;
+  }
+  let str = "";
+  let amountStr = amount.toString();
+  let decimalCount = 0;
+  let decimalPassed = false;
+  console.log(amountStr);
+  while (amountStr.length > 0 && amountStr[0] === "0") {
+    amountStr = amountStr.slice(1);
+  }
+  for (let i = 0; i < amountStr.length && decimalCount < 12; i++) {
+    if (amountStr[i] === ".") {
+      decimalPassed = true;
+    } else {
+      if (decimalPassed === true) {
+        decimalCount++;
+      }
+      str += amountStr[i];
+    }
+  }
+  str += "0".repeat(12 - decimalCount);
+  console.log({ str });
+  return BigInt(str);
 }
-initialize();
+function trim(num, maxDec) {
+  let d = false;
+  let c = 0;
+  let res = "";
+  for (let i = 0; i < num.length && c < maxDec; i++) {
+    if (num[i] === ".") {
+      d = true;
+    } else {
+      if (d) {
+        c++;
+      }
+    }
+    res += num[i];
+  }
+  return res;
+}
+//==================================================================================
+//Startup
+//==================================================================================
 
 const ipToWalletIndices = {};
 const highestIndex = [0, 1];
@@ -133,118 +343,11 @@ async function createMoneroWallet(ipAddress) {
     return moneroAddress;
   }
 }
-async function sendMonero(to, from, amount) {
-  console.log({ to, from, amount });
-  let formattedAmount = "";
-  let decimalPassed = false;
-  let zeroesToAdd = 12;
-  let amountStr = amount.toString();
-  while (amountStr.length > 0 && amountStr[0] === "0") {
-    amountStr = amountStr.slice(1);
-  }
-  for (let i = 0; i < amountStr.length; i++) {
-    if (amountStr[i] === ".") {
-      decimalPassed = true;
-    } else {
-      formattedAmount += amountStr[i];
-      if (decimalPassed === true) {
-        zeroesToAdd--;
-      }
-    }
-  }
-  formattedAmount += "0".repeat(zeroesToAdd);
-  console.log({ formattedAmount });
-  let walletIndices = addressToIndices[from];
-  let createdTx = await walletRPC.createTx({
-    accountIndex: walletIndices[0],
-    subaddressIndex: walletIndices[1],
-    address: to,
-    amount: formattedAmount, //(denominated in atomic units)
-    relay: false, // create transaction and relay to the network if true
-  });
-  let status = await walletRPC.relayTx(createdTx); // relay the transaction
-  return status;
-}
-async function getMinAmountFromBTCtoXMR() {
-  const response = await fetch("https://api.changenow.io/v1/min-amount/btc_xmr?api_key=" + api_key);
-  const minAmount = await response.json();
-  return minAmount;
-}
-async function estimateRecieved(amount, pathString) {
-  let reqStr = "https://api.changenow.io/v1/exchange-amount/" + amount + "/" + pathString + "?api_key=" + api_key;
 
-  let response = await fetch(reqStr);
-  let jsonResponse = await response.json();
-  return jsonResponse;
-}
-function convertFromFloatToBigIntX10_12(amount) {
-  if (amount === 0) {
-    return 0;
-  }
-  let str = "";
-  let amountStr = amount.toString();
-  let decimalCount = 0;
-  let decimalPassed = false;
-  console.log(amountStr);
-  while (amountStr.length > 0 && amountStr[0] === "0") {
-    amountStr = amountStr.slice(1);
-  }
-  for (let i = 0; i < amountStr.length && decimalCount < 12; i++) {
-    if (amountStr[i] === ".") {
-      decimalPassed = true;
-    } else {
-      if (decimalPassed === true) {
-        decimalCount++;
-      }
-      str += amountStr[i];
-    }
-  }
-  str += "0".repeat(12 - decimalCount);
-  console.log({ str });
-  return BigInt(str);
-}
-app.post("/createXMRToBTCTX", async function (req, res) {
-  console.log("Creating XMR to BTC transaction");
-  let { amount, bitcoinAddress } = req.body;
-  //make sure user is entitled to >= amount
-  let moneroAddress = IPtoAddress[req.socket.remoteAddress];
-  let entitledAmount = queryAddressTotal(moneroAddress);
-  let atomicAmount = convertFromFloatToBigIntX10_12(amount);
-  console.log({ moneroAddress, entitledAmount, atomicAmount });
-  if (atomicAmount > entitledAmount) {
-    res.send({ Status: "Could not send. Not entitled to enough XMR" });
-    return;
-  }
-  let preTransactionStats = await createTX(
-    "https://api.changenow.io/v1/transactions/" + api_key,
-    amount,
-    bitcoinAddress,
-    "xmr",
-    "btc"
-  );
-  res.send(preTransactionStats);
-});
-function trim(num, maxDec) {
-  let d = false;
-  let c = 0;
-  let res = "";
-  for (let i = 0; i < num.length && c < maxDec; i++) {
-    if (num[i] === ".") {
-      d = true;
-    } else {
-      if (d) {
-        c++;
-      }
-    }
-    res += num[i];
-  }
-  return res;
-}
-async function getTransactionStatus(id) {
-  const response = await fetch("https://api.changenow.io/v1/transactions/" + id + "/" + api_key);
-  const statusR = await response.json();
-  return statusR;
-}
+//==================================================================================
+//Transaction methods
+//==================================================================================
+
 async function createTX(url, amount, address, from, to) {
   console.log({ from, to, amount, address });
   let data = {
@@ -288,6 +391,17 @@ async function createTX(url, amount, address, from, to) {
   return decoded;
 }
 
+//========================================================================
+//Server startup
+//========================================================================
+async function initialize() {
+  walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
+  let moneroAddressScoped = await walletRPC.getAddress(0, 2);
+  console.log("RPC functional: ", moneroAddress === moneroAddressScoped);
+  let unlockedBalance = await walletRPC.getUnlockedBalance(0, 2);
+  console.log({ unlockedBalance });
+}
+initialize();
 app.listen(PORT, () => {
   console.log(`Server listening on ${PORT}`);
 });
