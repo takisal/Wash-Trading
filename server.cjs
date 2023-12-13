@@ -16,7 +16,6 @@ app.use(express.static(path.join(__dirname, "build")));
 let PORT = 3000;
 let walletRPC;
 const hardCodedXMRFee = 0.02;
-let destXMR = "8BddeK3YPhBSMQnMHqoj4NZYAbVDQkELde2GMKh599E92C9QuJgwQXzfdbXmTSfs7Y1dBxMwbaPzrZmGo8MYhmqmGdXSgtR";
 //===============================================================
 //Endpoints
 //===============================================================
