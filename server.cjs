@@ -397,8 +397,6 @@ async function initialize() {
   walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
   let moneroAddressScoped = await walletRPC.getAddress(0, 2);
   console.log("RPC functional: ", moneroAddress === moneroAddressScoped);
-  let unlockedBalance = await walletRPC.getUnlockedBalance(0, 2);
-  console.log({ unlockedBalance });
 }
 initialize();
 app.listen(PORT, () => {
