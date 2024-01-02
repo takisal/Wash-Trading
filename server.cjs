@@ -394,9 +394,7 @@ async function createTX(url, amount, address, from, to) {
 //Server startup
 //========================================================================
 async function initialize() {
-  walletRPC = await moneroTs.connectToWalletRpc("127.0.0.1:6060", "user", "usery");
-  let moneroAddressScoped = await walletRPC.getAddress(0, 2);
-  console.log("RPC functional: ", moneroAddress === moneroAddressScoped);
+  walletRPC = await moneroTs.connectToWalletRpc("http://127.0.0.1:6060", "user", "usery");
 }
 initialize();
 app.listen(PORT, () => {
